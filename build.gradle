@@ -1,0 +1,64 @@
+plugins {
+    id 'groovy'
+}
+
+group 'com.nullpo'
+version '0.0.1'
+
+tasks.withType(JavaCompile) {
+    options.encoding = 'utf-8'
+    sourceCompatibility = 1.8
+    targetCompatibility = 1.8
+}
+
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+    maven {
+        url "http://maven.aliyun.com/nexus/content/groups/public"
+    }
+    maven {
+        url "http://maven.aliyun.com/nexus/content/repositories/central"
+    }
+}
+
+dependencies {
+
+    //linux终端操作依赖
+    implementation 'org.jline:jline-terminal-jna:3.20.0'
+    //日志依赖包
+    implementation 'org.slf4j:slf4j-api:1.7.32'
+    implementation 'ch.qos.logback:logback-classic:1.2.6'
+    //groovy依赖包
+    implementation 'org.codehaus.groovy:groovy-all:3.0.8'
+
+    //测试依赖包
+    testImplementation 'junit:junit:4.13.2'
+}
+
+task dist(dependsOn: ['clean', 'jar'], type: Tar) {
+
+    delete 'build/package'
+
+    destinationDir(file('build/package/'))
+    archiveName("$project.name-$project.version-allsystem-${String.format('%1$tY%1$tm%1$td', new Date())}.tar.gz")
+    baseName("$project.name-$project.version")
+    compression(Compression.GZIP)
+
+    into(archiveBaseName.get() + '/lib') {
+        from(libsDirectory)
+        from(configurations.runtime)
+    }
+    into(archiveBaseName.get() + '/bin') {
+        from('bin')
+    }
+    into(archiveBaseName.get() + '/etc') {
+        from('etc')
+    }
+    into(archiveBaseName.get()) {
+        from(project.projectDir)
+        include("*.sh")
+        include("release-note")
+    }
+}
