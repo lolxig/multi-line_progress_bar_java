@@ -32,7 +32,7 @@ class Application {
                 while (progress <= 1.0) {
                     progress += (r.nextInt(10)) / 10000.0
                     Cursor.bar(name, progress)
-                    sleep(100)
+                    sleep(50)
                 }
                 latch.countDown()
             }
@@ -41,8 +41,6 @@ class Application {
         pool.shutdown()
 
         Cursor.close()
-
-
     }
 
 }

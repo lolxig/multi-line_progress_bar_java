@@ -3,6 +3,7 @@ package com.nullpo.utils
 import org.jline.terminal.Size
 import org.jline.terminal.impl.jna.linux.LinuxNativePty
 
+import java.sql.Time
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.locks.Lock
 import java.util.concurrent.locks.ReadWriteLock
@@ -42,6 +43,21 @@ class Cursor {
     private static AtomicInteger ORDER = new AtomicInteger(0)
 
     /**
+     * 定时器执行.
+     */
+    private static Timer timer
+
+    /**
+     * 定时任务是否已启动
+     */
+    private static volatile boolean taskStarted = false
+
+    /**
+     * 图像刷新周期.
+     */
+    private static long refreshTime = 100
+
+    /**
      * 读写锁，保证新加节点时，不会打乱map的遍历.
      */
     private static ReadWriteLock rw = new ReentrantReadWriteLock()
@@ -60,15 +76,24 @@ class Cursor {
         }
         OLD_LINES = 0
         ORDER.set(0)
+        timer = new Timer()
     }
 
     static void close() {
         MULTI_BAR.clear()
+        timer.cancel()
     }
 
     static void bar(String name, Double progress) {
+        if (!taskStarted) {
+            synchronized (Cursor.class) {
+                if (!taskStarted) {
+                    taskStarted = true
+                    timer.schedule(new GraphRefresh(), 0, refreshTime)
+                }
+            }
+        }
         updateBar(name, progress)
-        show()
     }
 
     /*------------------- PRIVATE TOOLS -------------------*/
@@ -89,20 +114,18 @@ class Cursor {
     }
 
     /**
-     * 添加新节点.
-     */
-    private static BarNode newNode(name, progress) {
-        new BarNode(order: ORDER.getAndIncrement(), name: name, progress: progress)
-    }
-
-    /**
      * 打印map.
      */
     private static void show() {
         SIZE = PTY.size
 
         resetCursor()
-        readLock { println MULTI_BAR.values().sort()*.shape.join('\n') }
+        readLock {
+            def graph = MULTI_BAR.values().sort()*.shape.join('\n')
+            if (graph) {
+                println graph
+            }
+        }
         OLD_LINES = MULTI_BAR.size()
     }
 
@@ -116,6 +139,16 @@ class Cursor {
     }
 
     /**
+     * 定时刷新图像.
+     */
+    private static class GraphRefresh extends TimerTask {
+        @Override
+        void run() {
+            show()
+        }
+    }
+
+    /**
      * 进度条封装.
      */
     private static class BarNode implements Comparable<BarNode> {
@@ -123,13 +156,6 @@ class Cursor {
         int order
         String name
         Double progress
-
-        /**
-         * 打印本节点.
-         */
-        void show() {
-            print(shape)
-        }
 
         /**
          * 获取形状.
