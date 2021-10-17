@@ -3,8 +3,10 @@ package com.nullpo.utils
 import org.jline.terminal.Size
 import org.jline.terminal.impl.jna.linux.LinuxNativePty
 
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.locks.Lock
+import java.util.concurrent.locks.ReadWriteLock
+import java.util.concurrent.locks.ReentrantReadWriteLock
 
 /**
  * Created with IntelliJ IDEA 2021.1.
@@ -25,9 +27,9 @@ class Cursor {
     private static Size SIZE
 
     /**
-     * 多线程下维护的map.
+     * 维护线程对应的进度map.
      */
-    private static volatile ConcurrentHashMap<String, BarNode> MULTI_BAR
+    private static volatile TreeMap<String, BarNode> MULTI_BAR = new TreeMap<>()
 
     /**
      * 上次打印的行数.
@@ -37,7 +39,14 @@ class Cursor {
     /**
      * 节点序列.
      */
-    private static AtomicInteger ORDER
+    private static AtomicInteger ORDER = new AtomicInteger(0)
+
+    /**
+     * 读写锁，保证新加节点时，不会打乱map的遍历.
+     */
+    private static ReadWriteLock rw = new ReentrantReadWriteLock()
+    private static Lock r = rw.readLock()
+    private static Lock w = rw.writeLock()
 
     /*------------------- PUBLIC INTERFACE -------------------*/
 
@@ -49,22 +58,15 @@ class Cursor {
                 }
             }
         }
-        if (null == MULTI_BAR) {
-            synchronized (Cursor.class) {
-                if (null == MULTI_BAR) {
-                    MULTI_BAR = new ConcurrentHashMap()
-                }
-            }
-        }
         OLD_LINES = 0
-        ORDER = new AtomicInteger(0)
+        ORDER.set(0)
     }
 
     static void close() {
         MULTI_BAR.clear()
     }
 
-    synchronized static void bar(String name, Double progress) {
+    static void bar(String name, Double progress) {
         updateBar(name, progress)
         show()
     }
@@ -76,8 +78,14 @@ class Cursor {
      */
     private static void updateBar(name, progress) {
         progress = progress > 1.0 ? 1.0 : progress
-        MULTI_BAR.compute(name, (_, node) ->
-                node ? updateNode(node, progress) : newNode(name, progress))
+
+        BarNode node
+        if (node = MULTI_BAR[name]) {
+            node.progress = progress
+        } else {
+            node = new BarNode(order: ORDER.getAndIncrement(), name: name, progress: progress)
+            writeLock { MULTI_BAR.put(name, node) }
+        }
     }
 
     /**
@@ -88,21 +96,13 @@ class Cursor {
     }
 
     /**
-     * 更新旧节点.
-     */
-    private static BarNode updateNode(node, progress) {
-        node.progress = progress
-        node
-    }
-
-    /**
      * 打印map.
      */
     private static void show() {
         SIZE = PTY.size
 
         resetCursor()
-        println MULTI_BAR.values().sort()*.shape.join('\n')
+        readLock { println MULTI_BAR.values().sort()*.shape.join('\n') }
         OLD_LINES = MULTI_BAR.size()
     }
 
@@ -154,6 +154,24 @@ class Cursor {
         @Override
         int compareTo(BarNode node) {
             return this.order - node.order
+        }
+    }
+
+    private static void readLock(Closure closure) {
+        r.lock()
+        try {
+            closure.call()
+        } finally {
+            r.unlock()
+        }
+    }
+
+    private static void writeLock(Closure closure) {
+        w.lock()
+        try {
+            closure.call()
+        } finally {
+            w.unlock()
         }
     }
 
