@@ -4,6 +4,7 @@ import org.jline.terminal.Size
 import org.jline.terminal.impl.jna.linux.LinuxNativePty
 
 import java.sql.Time
+import java.time.format.DateTimeFormatter
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.locks.Lock
 import java.util.concurrent.locks.ReadWriteLock
@@ -102,39 +103,15 @@ class Cursor {
      * 更新map.
      */
     private static void updateBar(name, progress) {
-        progress = progress > 1.0 ? 1.0 : progress
+        progress = Math.max(0.0, Math.min(progress, 1.0))
 
         BarNode node
         if (node = MULTI_BAR[name]) {
             node.progress = progress
         } else {
-            node = new BarNode(order: ORDER.getAndIncrement(), name: name, progress: progress)
+            node = new BarNode(order: ORDER.getAndIncrement(), name: name, progress: progress,
+                    startTime: System.currentTimeMillis())
             writeLock { MULTI_BAR.put(name, node) }
-        }
-    }
-
-    /**
-     * 打印map.
-     */
-    private static void show() {
-        SIZE = PTY.size
-
-        resetCursor()
-        readLock {
-            def graph = MULTI_BAR.values().sort()*.shape.join('\n')
-            if (graph) {
-                println graph
-            }
-        }
-        OLD_LINES = MULTI_BAR.size()
-    }
-
-    /**
-     * 根据OLD_LINES重置光标.
-     */
-    private static void resetCursor() {
-        if (OLD_LINES) {
-            print("\033[${OLD_LINES}A")
         }
     }
 
@@ -142,10 +119,37 @@ class Cursor {
      * 定时刷新图像.
      */
     private static class GraphRefresh extends TimerTask {
+
+        /**
+         * 打印map.
+         */
+        private static void show() {
+            SIZE = PTY.size
+
+            resetCursor()
+            readLock {
+                def graph = MULTI_BAR.values().sort()*.shape.join('\n')
+                if (graph) {
+                    println graph
+                }
+            }
+            OLD_LINES = MULTI_BAR.size()
+        }
+
+        /**
+         * 根据OLD_LINES重置光标.
+         */
+        private static void resetCursor() {
+            if (OLD_LINES) {
+                print("\033[${OLD_LINES}A")
+            }
+        }
+
         @Override
         void run() {
             show()
         }
+
     }
 
     /**
@@ -157,14 +161,32 @@ class Cursor {
         String name
         Double progress
 
+        long startTime
+
         /**
          * 获取形状.
          */
         private String getShape() {
-            String format = '\r%s:[%s] %6.2f%%'
-            int remainCol = SIZE.columns - name.size() - 11
+            String format = '\r%s:[%s] %6.2f%% %s'
+            String tg = timeGraph(startTime)
+            int remainCol = SIZE.columns - name.size() - 12 - tg.size()
 
-            String.format(format, name, progressGraph(progress, remainCol), progress * 100.0)
+            String.format(format, name, progressGraph(progress, remainCol), progress * 100.0, tg)
+        }
+
+        private static String timeGraph(st) {
+            long sec = (long) ((System.currentTimeMillis() - st) / 1000)
+
+            int h, m, s
+            def builder = new StringBuilder()
+            if (h = (int) (sec / 3600)) {
+                builder.append(h).append('h')
+            }
+            if (m = (int) ((sec % 3600) / 60)) {
+                builder.append(m).append('m')
+            }
+            s = (sec % 3600) % 60
+            builder.append(s).append('s').toString()
         }
 
         private static String progressGraph(progress, col) {
