@@ -32,7 +32,7 @@ class Application {
                 while (progress <= 1.0) {
                     progress += (r.nextInt(10)) / 10000.0
                     Cursor.bar(name, progress)
-                    sleep(50)
+                    sleep(10)
                 }
                 latch.countDown()
             }

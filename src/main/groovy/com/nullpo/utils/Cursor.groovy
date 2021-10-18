@@ -3,8 +3,6 @@ package com.nullpo.utils
 import org.jline.terminal.Size
 import org.jline.terminal.impl.jna.linux.LinuxNativePty
 
-import java.sql.Time
-import java.time.format.DateTimeFormatter
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.locks.Lock
 import java.util.concurrent.locks.ReadWriteLock
@@ -68,6 +66,12 @@ class Cursor {
     /*------------------- PUBLIC INTERFACE -------------------*/
 
     static void open() {
+        //系统检测
+        if (!System.getProperty('os.name').contains('Linux')) {
+            throw new RuntimeException('仅支持Linux平台，不支持Windows平台！')
+        }
+
+        //获取当前linux控制台
         if (null == PTY) {
             synchronized (Cursor.class) {
                 if (null == PTY) {
@@ -86,6 +90,8 @@ class Cursor {
     }
 
     static void bar(String name, Double progress) {
+        updateBar(name, progress)
+        //若打印任务没启动，则以双重检查的方式启动它
         if (!taskStarted) {
             synchronized (Cursor.class) {
                 if (!taskStarted) {
@@ -94,7 +100,6 @@ class Cursor {
                 }
             }
         }
-        updateBar(name, progress)
     }
 
     /*------------------- PRIVATE TOOLS -------------------*/
@@ -103,11 +108,13 @@ class Cursor {
      * 更新map.
      */
     private static void updateBar(name, progress) {
+        //进度只能是[0,1]的区间
         progress = Math.max(0.0, Math.min(progress, 1.0))
 
+        //若map里存在，则更新；若不存在，则锁住map，然后添加节点
         BarNode node
         if (node = MULTI_BAR[name]) {
-            node.progress = progress
+            node.setProgress(progress)
         } else {
             node = new BarNode(order: ORDER.getAndIncrement(), name: name, progress: progress,
                     startTime: System.currentTimeMillis())
@@ -127,11 +134,12 @@ class Cursor {
             SIZE = PTY.size
 
             resetCursor()
+            def graph
             readLock {
-                def graph = MULTI_BAR.values().sort()*.shape.join('\n')
-                if (graph) {
-                    println graph
-                }
+                graph = MULTI_BAR.values()*.shape.join('\n')
+            }
+            if (graph) {
+                println graph
             }
             OLD_LINES = MULTI_BAR.size()
         }
@@ -157,21 +165,75 @@ class Cursor {
      */
     private static class BarNode implements Comparable<BarNode> {
 
+        /**
+         * 进度条停止计算标志.
+         */
+        boolean stop
+        /**
+         * 节点入map的顺序.
+         */
         int order
+        /**
+         * 节点名字.
+         */
         String name
+        /**
+         * 节点进度.
+         */
         Double progress
-
+        /**
+         * 节点加入时间，默认是加入即开始.
+         */
         long startTime
+        /**
+         * 节点字符串缓存.
+         */
+        String cache
+        /**
+         * 节点更新标志.
+         */
+        boolean update
+        /**
+         * 节点进度条字符串缓存.
+         */
+        String progressCache
+
+        /**
+         * 进度条格式.
+         */
+        private static final String format = '\r%s:[%s] %6.2f%% '
 
         /**
          * 获取形状.
          */
         private String getShape() {
-            String format = '\r%s:[%s] %6.2f%% %s'
-            String tg = timeGraph(startTime)
-            int remainCol = SIZE.columns - name.size() - 12 - tg.size()
+            if (stop) {
+                return cache
+            }
 
-            String.format(format, name, progressGraph(progress, remainCol), progress * 100.0, tg)
+            String tg = timeGraph(startTime)
+            if (update) {
+                int remainCol = SIZE.columns - name.size() - 12 - tg.size()
+                synchronized (this) {
+                    progressCache = String.format(format, name, progressGraph(progress, remainCol), progress * 100.0)
+                }
+                update = false
+            }
+            cache = progressCache + tg
+        }
+
+        void setProgress(double progress) {
+            update = true
+            synchronized (this) {
+                if (progress >= 1.0) {
+                    /* 进度满的时候，必须先设置进度为1，然后刷新缓存，再设置stop为true，顺序绝对不能乱 */
+                    this.progress = 1.0
+                    shape
+                    stop = true
+                } else {
+                    this.progress = progress
+                }
+            }
         }
 
         private static String timeGraph(st) {
